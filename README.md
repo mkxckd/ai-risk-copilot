@@ -10,11 +10,11 @@ MarketSimulator ─► RiskEngine (per 5-min tick) ─► SQLite ◄────
                           │                         sector_exposures,   RiskTools (6 read-only tools)
                           ▼                         alerts                  │
                  RiskAnomalyDetector                                        ▼
-        (per-portfolio robust z + IsolationForest)              RiskAgent: Claude tool-use loop
+        (per-portfolio robust z + IsolationForest)        RiskAgent: Claude / OpenAI tool-use loop
                           │                                     (deterministic fallback, same tools)
                           └──────────────► alerts ───────────────────────┐
                                                                          ▼
-                                                              FastAPI  (/score /explain /alerts ...)
+                                                     FastAPI (/score /explain /alerts ...)  +  MCP server
 ```
 
 ## Quick start
@@ -22,14 +22,15 @@ MarketSimulator ─► RiskEngine (per 5-min tick) ─► SQLite ◄────
 pip install -r requirements.txt
 python -m scripts.seed                       # simulate history, train + save the detector
 uvicorn app.main:app --port 8000             # RISK_SIM_INTERVAL=2 to tick live every 2s
-export ANTHROPIC_API_KEY=...                 # optional: enables the LLM agent (model: RISK_LLM_MODEL)
+export ANTHROPIC_API_KEY=...                 # optional: enables the LLM agent with Claude
+# or: export OPENAI_API_KEY=... RISK_LLM_PROVIDER=openai   (model override: RISK_LLM_MODEL)
 
 curl -X POST localhost:8000/simulation/inject -H 'content-type: application/json' \
   -d '{"kind":"concentrate","portfolio_id":"TECH","symbol":"QBIT","target_weight":0.45}'
 curl -X POST 'localhost:8000/simulation/step?n=3'
 curl localhost:8000/alerts
 curl -X POST localhost:8000/portfolios/TECH/explain
-python -m unittest discover -s tests -t .    # 16 unit/integration tests
+python -m pytest -q                          # 21 unit/integration tests (unittest-compatible)
 python -m scripts.evaluate 5                 # detector evaluation
 docker build -t risk-copilot . && docker run -p 8000:8000 risk-copilot
 ```
@@ -37,7 +38,9 @@ docker build -t risk-copilot . && docker run -p 8000:8000 risk-copilot
 ## Validation
 - The core service layer is framework-independent and covered by unit tests.
 - The FastAPI adapter is also exercised with `fastapi.testclient.TestClient`, covering health, portfolio/risk reads, validation, stateless scoring, explanations, and simulation controls.
-- The LLM path uses a scripted fake client in tests; no live API key is required for the test suite.
+- The LLM path uses scripted fake clients in tests (Claude-style and OpenAI function-calling); no live API key is required.
+- The MCP server is tested end to end with an in-memory MCP client (tool listing, calls and error handling).
+- GitHub Actions runs the test suite and the detector evaluation on every push and pull request.
 
 ## API
 | Endpoint | Purpose |
@@ -50,6 +53,16 @@ docker build -t risk-copilot . && docker run -p 8000:8000 risk-copilot
 | `GET /analytics/summary` | cross-portfolio SQL analytics (VaR rank, alert counts, VaR change vs N ticks ago) |
 | `POST /simulation/step`, `/simulation/inject` | advance the market; inject `concentrate` / `vol_spike` / `sector_crash` |
 
+## MCP server
+`python -m app.mcp_server` exposes the copilot over the Model Context Protocol (stdio), so any MCP client (Claude Desktop,
+IDE agents, a custom agent) can query it. Tools: `list_portfolios`, `get_latest_snapshot`, `get_risk_history`,
+`get_positions`, `explain_change`, `get_market_context`, `get_similar_alerts` and `explain_portfolio_risk`. They are the
+same read-only tools the built-in agent uses; none of them trades, injects events or writes to the database.
+
+```json
+{"mcpServers": {"risk-copilot": {"command": "python", "args": ["-m", "app.mcp_server"], "cwd": "/path/to/ai-risk-copilot"}}}
+```
+
 ## Design decisions
 - **Risk metrics** (`app/risk.py`): NAV, gross/net, leverage, beta, historical-simulation VaR 95/99 on *current weights*
   over a 120-tick window (scaled to 1 day by √time), annualised vol, window drawdown, top-position weight, HHI, sector exposure.
@@ -59,7 +72,8 @@ docker build -t risk-copilot . && docker run -p 8000:8000 risk-copilot
   Scales have per-feature *materiality floors* (e.g. beta 0.05): without them a beta-neutral book's near-zero baseline
   turned ordinary weight drift into false alarms (I hit this: 7% of clean snapshots flagged before the floors, 0% after).
 - **Alert hygiene**: 20-tick cooldown per portfolio, bypassed on escalation or a *new* driver feature.
-- **Agent** (`app/agent.py`, `app/tools.py`): the LLM never sees raw tables; it calls tools (latest snapshot, `explain_change`
+- **Agent** (`app/agent.py`, `app/tools.py`, `app/llm_clients.py`): one tool-use loop for both providers. Claude runs through
+  the Anthropic SDK; OpenAI models run through an adapter that maps the loop to Chat Completions function calling. The LLM never sees raw tables; it calls tools (latest snapshot, `explain_change`
   = metric deltas + trades + P&L attribution + weight/sector deltas, market context, similar past alerts). The system prompt
   requires every number to come from a tool result. Without an API key, or if the API errors, a deterministic explainer
   runs the same tools, so `/explain` always answers and always returns its evidence.
