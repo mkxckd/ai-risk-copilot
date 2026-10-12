@@ -1,9 +1,11 @@
 """FastAPI inference service.  Run: uvicorn app.main:app --port 8000"""
 import asyncio
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .bootstrap import build_system
@@ -25,6 +27,16 @@ class ScoreRequest(BaseModel):
 
 class ExplainRequest(BaseModel):
     question: Optional[str] = Field(None, max_length=500)
+
+
+class StressScenario(BaseModel):
+    name: Optional[str] = Field(None, max_length=80)
+    market: float = Field(0.0, ge=-0.9, le=0.9)
+    sectors: dict[str, float] = {}
+
+
+class StressRequest(BaseModel):
+    scenarios: list[StressScenario] = Field(..., min_length=1, max_length=20)
 
 
 class InjectRequest(BaseModel):
@@ -103,6 +115,19 @@ def create_app(system=None) -> FastAPI:
     def analytics(lookback: int = Query(24, ge=1, le=100)):
         return svc().analytics(lookback)
 
+    @app.get("/portfolios/{pid}/stress")
+    def stress(pid: str):
+        """Standard stress scenarios (market and sector shocks) applied to current positions."""
+        return guard(svc().stress, pid)
+
+    @app.post("/portfolios/{pid}/stress")
+    def stress_custom(pid: str, body: StressRequest):
+        return guard(svc().stress, pid, [sc.model_dump() for sc in body.scenarios])
+
+    @app.get("/dashboard/overview")
+    def overview(n: int = Query(120, ge=10, le=500)):
+        return svc().overview(n)
+
     @app.post("/simulation/step")
     def step(n: int = Query(1, ge=1, le=500)):
         return svc().step(n)
@@ -113,6 +138,7 @@ def create_app(system=None) -> FastAPI:
         kind, delay = params.pop("kind"), params.pop("delay")
         return guard(svc().inject, kind, delay, **params)
 
+    app.mount("/", StaticFiles(directory=str(Path(__file__).parent / "static"), html=True), name="dashboard")
     return app
 
 

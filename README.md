@@ -21,7 +21,7 @@ MarketSimulator ─► RiskEngine (per 5-min tick) ─► SQLite ◄────
 ```bash
 pip install -r requirements.txt
 python -m scripts.seed                       # simulate history, train + save the detector
-uvicorn app.main:app --port 8000             # RISK_SIM_INTERVAL=2 to tick live every 2s
+uvicorn app.main:app --port 8000             # dashboard at http://localhost:8000 (RISK_SIM_INTERVAL=2 to tick live every 2s)
 export ANTHROPIC_API_KEY=...                 # optional: enables the LLM agent with Claude
 # or: export OPENAI_API_KEY=... RISK_LLM_PROVIDER=openai   (model override: RISK_LLM_MODEL)
 
@@ -30,15 +30,33 @@ curl -X POST localhost:8000/simulation/inject -H 'content-type: application/json
 curl -X POST 'localhost:8000/simulation/step?n=3'
 curl localhost:8000/alerts
 curl -X POST localhost:8000/portfolios/TECH/explain
-python -m pytest -q                          # 21 unit/integration tests (unittest-compatible)
+python -m pytest -q                          # 31 unit/integration tests (unittest-compatible)
 python -m scripts.evaluate 5                 # detector evaluation
 docker build -t risk-copilot . && docker run -p 8000:8000 risk-copilot
 ```
+
+## Dashboard
+![Risk Copilot dashboard after a concentration event](docs/dashboard.png)
+
+`http://localhost:8000` serves a single-page dashboard (plain HTML, CSS and JavaScript, no build step) on top of the same API:
+- **Books**: one row per portfolio with VaR, leverage and a 10-hour *risk tape*. Bar height is VaR as a share of NAV on a
+  scale shared by every book; bar colour shows how far the book is running above its own median; red notches mark alerts.
+- **Run the market**: play/pause or step 5 minutes or an hour at a time, and inject a concentration trade, a volatility
+  spike or an Energy crash to watch the detector respond.
+- **Explain what changed**: calls `/explain` and shows the explanation with the tool outputs it was built from.
+- **What if, right now**: instant P&L of the selected book under seven standard shocks, with the three biggest losers in
+  each, plus a builder for your own market and sector move.
+
+## Stress tests
+`app/stress.py` applies each position's shocked return, `beta × market move + sector move`, to its current market value.
+This is the same factor structure the simulator uses. It is a linear, instantaneous shock with no second-order effects,
+liquidity costs or re-hedging, so treat it as a first read rather than a full scenario engine.
 
 ## Validation
 - The core service layer is framework-independent and covered by unit tests.
 - The FastAPI adapter is also exercised with `fastapi.testclient.TestClient`, covering health, portfolio/risk reads, validation, stateless scoring, explanations, and simulation controls.
 - The LLM path uses scripted fake clients in tests (Claude-style and OpenAI function-calling); no live API key is required.
+- Stress maths (linearity, symmetry, sector isolation), validation and the dashboard endpoints have their own tests.
 - The MCP server is tested end to end with an in-memory MCP client (tool listing, calls and error handling).
 - GitHub Actions runs the test suite and the detector evaluation on every push and pull request.
 
@@ -51,6 +69,9 @@ docker build -t risk-copilot . && docker run -p 8000:8000 risk-copilot
 | `POST /portfolios/{id}/explain` | agent explanation + the tool outputs it used (`evidence`) |
 | `GET /alerts?portfolio_id=&severity=` | alert log with drivers |
 | `GET /analytics/summary` | cross-portfolio SQL analytics (VaR rank, alert counts, VaR change vs N ticks ago) |
+| `GET /portfolios/{id}/stress` | P&L under the standard market and sector shocks, with worst contributors |
+| `POST /portfolios/{id}/stress` | the same for up to 20 custom scenarios (`market`, `sectors`, each between -90% and +90%) |
+| `GET /dashboard/overview?n=` | every book's latest snapshot, sector weights, recent history and the alert feed in one call |
 | `POST /simulation/step`, `/simulation/inject` | advance the market; inject `concentrate` / `vol_spike` / `sector_crash` |
 
 ## MCP server
@@ -98,4 +119,5 @@ same read-only tools the built-in agent uses; none of them trades, injects event
   A P&L/drawdown limit monitor would complement it.
 - The LLM path is covered by a scripted fake client in tests (tool loop, tool_result wiring, error fallback), not by live API calls.
 - SQLite single-writer is fine for a simulator; use Postgres/TimescaleDB for real throughput (the SQL is standard apart from `?` param style).
+- Stress tests are linear in beta and sector; options, convexity and correlation breakdowns are not modelled.
 - No auth or rate limiting on the API.

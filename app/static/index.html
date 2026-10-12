@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Risk Copilot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <h1>Risk Copilot</h1>
+    <p class="clock" id="clock" aria-live="polite">Connecting to the risk engine…</p>
+  </div>
+  <div class="controls" role="group" aria-label="Market simulation">
+    <button id="play" class="btn primary" type="button" aria-pressed="false">Run market</button>
+    <button id="step1" class="btn" type="button">Advance 5 min</button>
+    <button id="step12" class="btn" type="button">Advance 1 hour</button>
+  </div>
+</header>
+
+<main>
+  <section class="tape" aria-labelledby="tape-title">
+    <div class="tape-head">
+      <h2 id="tape-title">Books</h2>
+      <p class="legend">Each strip is 10 hours of 1-day VaR as a share of NAV. Taller bars mean more risk; warmer bars mean the book is running above its own normal level. Red notches are model alerts.</p>
+    </div>
+    <ol class="books" id="books"></ol>
+  </section>
+
+  <div class="workspace">
+    <section class="detail" aria-labelledby="detail-title">
+      <div class="detail-head">
+        <div>
+          <h2 id="detail-title">Select a book</h2>
+          <p class="sub" id="detail-sub"></p>
+        </div>
+        <button id="explain" class="btn primary" type="button">Explain what changed</button>
+      </div>
+      <div class="figures" id="figures"></div>
+      <figure class="chart">
+        <svg id="var-chart" role="img" aria-label="VaR history chart"></svg>
+        <figcaption id="chart-caption">1-day 95% VaR as % of NAV, with its 40-tick average.</figcaption>
+      </figure>
+      <div class="explanation" id="explanation" hidden></div>
+    </section>
+
+    <aside class="side">
+      <section aria-labelledby="events-title" class="panel">
+        <h2 id="events-title">Stress the market</h2>
+        <p class="sub">Inject an event, then run the market and watch the detector respond.</p>
+        <div class="events">
+          <button class="event" type="button" data-kind="concentrate">
+            <strong>Concentration</strong><span>Tech Growth moves 45% of NAV into QBIT</span>
+          </button>
+          <button class="event" type="button" data-kind="vol_spike">
+            <strong>Volatility spike</strong><span>Market volatility quadruples for 2.5 hours</span>
+          </button>
+          <button class="event" type="button" data-kind="sector_crash">
+            <strong>Energy crash</strong><span>Energy falls 2% every 5 minutes for 50 minutes</span>
+          </button>
+        </div>
+        <p class="note" id="event-note" role="status"></p>
+      </section>
+
+      <section aria-labelledby="alerts-title" class="panel">
+        <h2 id="alerts-title">Alerts</h2>
+        <ol class="alerts" id="alerts"><li class="empty">No alerts yet. Inject an event to see the detector work.</li></ol>
+      </section>
+    </aside>
+  </div>
+
+  <section class="stress" aria-labelledby="stress-title">
+    <div class="stress-head">
+      <h2 id="stress-title">What if, right now</h2>
+      <p class="sub" id="stress-sub">Instant P&amp;L of the selected book's current positions under market and sector shocks.</p>
+    </div>
+    <div class="stress-grid">
+      <ol class="scenarios" id="scenarios"></ol>
+      <form class="custom" id="custom-stress">
+        <h3>Build your own shock</h3>
+        <label>Market move <output id="mkt-out">−10%</output>
+          <input type="range" id="mkt" min="-40" max="40" step="1" value="-10">
+        </label>
+        <label>Sector
+          <select id="sector"></select>
+        </label>
+        <label>Sector move <output id="sec-out">−15%</output>
+          <input type="range" id="sec" min="-40" max="40" step="1" value="-15">
+        </label>
+        <button class="btn primary" type="submit">Run shock</button>
+        <p class="custom-result" id="custom-result" role="status"></p>
+      </form>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">Simulated portfolios and prices. Not investment advice. API reference at <a href="/docs">/docs</a>.</footer>
+<script src="app.js"></script>
+</body>
+</html>

@@ -2,6 +2,7 @@
 import json
 
 from .anomaly import FEATURES
+from .stress import run_stress
 
 
 class RiskService:
@@ -44,6 +45,24 @@ class RiskService:
     def explain(self, pid, question=None):
         self._check(pid)
         return self.s.agent.explain(pid, question)
+
+    def stress(self, pid, scenarios=None):
+        self._check(pid)
+        return run_stress(self.s.tools, self.s.db, pid, scenarios)
+
+    def overview(self, n=120):
+        """Everything the dashboard needs in one call: latest risk, short history and recent alerts per portfolio."""
+        out = []
+        names = {r["portfolio_id"]: r for r in self.s.db.query("SELECT portfolio_id, name, strategy FROM portfolios")}
+        for pid in self.s.engine.portfolio_ids:
+            latest = self.s.tools.get_latest_snapshot(pid)
+            hist = list(reversed(self.s.tools.get_risk_history(pid, n)["rows"]))
+            out.append({"portfolio_id": pid, "name": names[pid]["name"], "strategy": names[pid]["strategy"],
+                        "snapshot": latest["snapshot"], "sector_weights": latest["sector_weights"],
+                        "latest_alert": latest["latest_alert"],
+                        "history": [{k: r[k] for k in ("tick", "var_95_pct", "vol_ann", "leverage", "top_weight", "is_anomaly")}
+                                    for r in hist]})
+        return {"tick": self.s.engine.tick, "portfolios": out, "alerts": self.alerts(limit=25)}
 
     def analytics(self, lookback=24):
         db = self.s.db
