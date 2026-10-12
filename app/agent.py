@@ -1,9 +1,9 @@
-"""LLM-powered risk explainer. Uses Claude with tool use when an API client is available; otherwise falls
-back to a deterministic explainer that runs the same tools. Both return the tool outputs as evidence."""
+"""LLM-powered risk explainer. Uses Claude (or an OpenAI model via app.llm_clients) with tool use when an API
+client is available; otherwise falls back to a deterministic explainer that runs the same tools. Both return the
+tool outputs as evidence."""
 import json
-import os
 
-from .config import LLM_MODEL
+from .llm_clients import default_client, model_for, provider_from_env
 from .tools import TOOL_SPECS
 
 SYSTEM_PROMPT = """You are a trading risk analyst copilot. A risk manager asks why a portfolio's risk changed.
@@ -20,20 +20,11 @@ Rules:
 MAX_TOOL_CHARS = 12000
 
 
-def _default_client():
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        return None
-    try:
-        import anthropic
-        return anthropic.Anthropic()
-    except Exception:
-        return None
-
-
 class RiskAgent:
-    def __init__(self, tools, client=None, model: str = LLM_MODEL):
-        self.tools, self.model = tools, model
-        self.client = client if client is not None else _default_client()
+    def __init__(self, tools, client=None, model: str | None = None):
+        self.tools = tools
+        self.client = client if client is not None else default_client()
+        self.model = model or model_for(provider_from_env())
 
     def explain(self, portfolio_id: str, question: str | None = None, max_steps: int = 6) -> dict:
         if self.client is None:
